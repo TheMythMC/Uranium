@@ -76,6 +76,7 @@ import org.bukkit.entity.minecart.PoweredMinecart;
 import org.bukkit.entity.minecart.SpawnerMinecart;
 import org.bukkit.entity.minecart.StorageMinecart;
 import org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason;
+import org.bukkit.event.weather.LightningStrikeEvent;
 import org.bukkit.event.world.SpawnChangeEvent;
 import org.bukkit.event.world.TimeSkipEvent;
 import org.bukkit.generator.BlockPopulator;
@@ -92,6 +93,9 @@ import org.bukkit.util.Consumer;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.cardboardpowered.impl.entity.PlayerImpl;
+import org.cardboardpowered.impl.util.CardboardFluidRaytraceMode;
+import org.cardboardpowered.impl.util.CardboardRayTraceResult;
+import org.cardboardpowered.interfaces.IServerWorld;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -111,12 +115,14 @@ import com.javazilla.bukkitfabric.interfaces.IMixinWorldChunk;
 import io.papermc.paper.world.MoonPhase;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import net.minecraft.block.AbstractRedstoneGateBlock;
+import net.minecraft.block.Blocks;
 import net.minecraft.block.ChorusFlowerBlock;
 import net.minecraft.entity.AreaEffectCloudEntity;
 import net.minecraft.entity.EntityData;
 import net.minecraft.entity.ExperienceOrbEntity;
 import net.minecraft.entity.FallingBlockEntity;
 import net.minecraft.entity.ItemEntity;
+import net.minecraft.entity.LightningEntity;
 import net.minecraft.entity.TntEntity;
 import net.minecraft.entity.decoration.AbstractDecorationEntity;
 import net.minecraft.entity.decoration.ArmorStandEntity;
@@ -148,6 +154,7 @@ import net.minecraft.server.world.ChunkTicketType;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Unit;
+import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.ChunkPos;
@@ -155,12 +162,14 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.registry.Registry;
 import net.minecraft.world.GameRules;
+import net.minecraft.world.RaycastContext;
 import net.minecraft.world.chunk.ChunkStatus;
 import net.minecraft.world.chunk.ReadOnlyChunk;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.explosion.Explosion;
 import net.minecraft.world.gen.feature.ConfiguredFeature;
 import net.minecraft.world.gen.feature.ConfiguredFeatures;
+import net.minecraft.world.gen.feature.StructureFeature;
 import net.minecraft.world.level.ServerWorldProperties;
 
 @SuppressWarnings("deprecation")
@@ -230,7 +239,7 @@ public class WorldImpl implements World {
     @Override
     public boolean canGenerateStructures() {
         // FIXME BROKEN!!!
-        return false;//nms.getLevelProperties().hasStructures();
+        return true;//nms.getLevelProperties().hasStructures();
     }
 
     @Override
@@ -513,16 +522,12 @@ public class WorldImpl implements World {
     public List<Entity> getEntities() {
         List<Entity> list = new ArrayList<Entity>();
 
-     // TODO 1.17ify
-        /*
-        for (Object object : nms.entitiesById.values()) {
-            if (object instanceof net.minecraft.entity.Entity) {
-                net.minecraft.entity.Entity mc = (net.minecraft.entity.Entity) object;
-                Entity bukkit = ((IMixinEntity)mc).getBukkitEntity();
+        nms.iterateEntities().forEach(entity -> {
+            Entity bukkitEntity = ((IMixinEntity)entity).getBukkitEntity();
+            if (bukkitEntity != null && bukkitEntity.isValid())
+                list.add(bukkitEntity);
+        });
 
-                if (bukkit != null && bukkit.isValid()) list.add(bukkit);
-            }
-        }*/
         return list;
     }
 
@@ -537,9 +542,7 @@ public class WorldImpl implements World {
     public <T extends Entity> Collection<T> getEntitiesByClass(Class<T> arg0) {
         Collection<T> list = new ArrayList<T>();
 
-        // TODO 1.17ify
-        /*
-        for (Object entity: nms.iterateEntities().entitiesById.values()) {
+        for (Object entity: nms.iterateEntities()) {
             if (entity instanceof net.minecraft.entity.Entity) {
                 Entity bukkitEntity = ((IMixinEntity)(net.minecraft.entity.Entity) entity).getBukkitEntity();
 
@@ -551,7 +554,7 @@ public class WorldImpl implements World {
                 if (arg0.isAssignableFrom(bukkitClass) && bukkitEntity.isValid())
                     list.add((T) bukkitEntity);
             }
-        }*/
+        }
 
         return list;
     }
@@ -560,8 +563,7 @@ public class WorldImpl implements World {
     public Collection<Entity> getEntitiesByClasses(Class<?>... arg0) {
         Collection<Entity> list = new ArrayList<Entity>();
 
-        /*
-        for (Object entity: nms.entitiesById.values()) {
+        for (Object entity: nms.iterateEntities()) {
             if (entity instanceof net.minecraft.entity.Entity) {
                 Entity bukkitEntity = ((IMixinEntity)(net.minecraft.entity.Entity) entity).getBukkitEntity();
 
@@ -578,8 +580,7 @@ public class WorldImpl implements World {
                     }
                 }
             }
-        }*/
-
+        }
         return list;
     }
 
@@ -698,10 +699,8 @@ public class WorldImpl implements World {
     }
 
     @Override
-    public Block getHighestBlockAt(int arg0, int arg1, HeightMap arg2) {
-        // TODO Auto-generated method stub
-        System.out.println("GET HIGH Y!");
-        return null;
+    public Block getHighestBlockAt(int x, int z, org.bukkit.HeightMap heightMap) {
+        return getBlockAt(x, getHighestBlockYAt(x, z, heightMap), z);
     }
 
     @Override
@@ -748,9 +747,7 @@ public class WorldImpl implements World {
     public List<LivingEntity> getLivingEntities() {
         List<LivingEntity> list = new ArrayList<LivingEntity>();
 
-     // TODO 1.17ify
-        /*
-        for (Object o : nms.entitiesById.values()) {
+        for (Object o : nms.iterateEntities()) {
             if (o instanceof net.minecraft.entity.Entity) {
                 net.minecraft.entity.Entity mcEnt = (net.minecraft.entity.Entity) o;
                 Entity bukkitEntity = ((IMixinEntity)mcEnt).getBukkitEntity();
@@ -759,8 +756,7 @@ public class WorldImpl implements World {
                 if (bukkitEntity != null && bukkitEntity instanceof LivingEntity && bukkitEntity.isValid())
                     list.add((LivingEntity) bukkitEntity);
             }
-        }*/
-
+        }
         return list;
     }
 
@@ -1050,9 +1046,10 @@ public class WorldImpl implements World {
     }
 
     @Override
-    public Location locateNearestStructure(Location arg0, StructureType arg1, int arg2, boolean arg3) {
-        // TODO Auto-generated method stub
-        return null;
+    public Location locateNearestStructure(Location origin, StructureType structureType, int radius, boolean findUnexplored) {
+        BlockPos originPos = new BlockPos(origin.getX(), origin.getY(), origin.getZ());
+        BlockPos nearest = this.getHandle().getChunkManager().getChunkGenerator().locateStructure(this.getHandle(), StructureFeature.STRUCTURES.get(structureType.getName()), originPos, radius, findUnexplored);
+        return (nearest == null) ? null : new Location(this, nearest.getX(), nearest.getY(), nearest.getZ());
     }
 
     @Override
@@ -1109,27 +1106,55 @@ public class WorldImpl implements World {
     }
 
     @Override
-    public RayTraceResult rayTrace(Location arg0, Vector arg1, double arg2, FluidCollisionMode arg3, boolean arg4, double arg5, Predicate<Entity> arg6) {
-        // TODO Auto-generated method stub
-        return null;
+    public RayTraceResult rayTrace(Location start, Vector direction, double maxDistance, FluidCollisionMode mode, boolean ignorePassableBlocks, double raySize, Predicate<Entity> filter) {
+        RayTraceResult blockHit = this.rayTraceBlocks(start, direction, maxDistance, mode, ignorePassableBlocks);
+        Vector startVec = null;
+        double blockHitDistance = maxDistance;
+
+        if (blockHit != null) {
+            startVec = start.toVector();
+            blockHitDistance = startVec.distance(blockHit.getHitPosition());
+        }
+
+        RayTraceResult entityHit = this.rayTraceEntities(start, direction, blockHitDistance, raySize, filter);
+        if (blockHit == null)  return entityHit;
+        if (entityHit == null) return blockHit;
+
+        double entityHitDistanceSquared = startVec.distanceSquared(entityHit.getHitPosition());
+        return (entityHitDistanceSquared < (blockHitDistance * blockHitDistance)) ? entityHit : blockHit;
     }
 
     @Override
-    public RayTraceResult rayTraceBlocks(Location arg0, Vector arg1, double arg2) {
-        // TODO Auto-generated method stub
-        return null;
+    public RayTraceResult rayTraceBlocks(Location start, Vector direction, double maxDistance) {
+        return this.rayTraceBlocks(start, direction, maxDistance, FluidCollisionMode.NEVER, false);
     }
 
     @Override
-    public RayTraceResult rayTraceBlocks(Location arg0, Vector arg1, double arg2, FluidCollisionMode arg3) {
-        // TODO Auto-generated method stub
-        return null;
+    public RayTraceResult rayTraceBlocks(Location start, Vector direction, double maxDistance, FluidCollisionMode fluidCollisionMode) {
+        return this.rayTraceBlocks(start, direction, maxDistance, fluidCollisionMode, false);
     }
 
     @Override
-    public RayTraceResult rayTraceBlocks(Location arg0, Vector arg1, double arg2, FluidCollisionMode arg3, boolean arg4) {
-        // TODO Auto-generated method stub
-        return null;
+    public RayTraceResult rayTraceBlocks(Location start, Vector direction, double maxDistance, FluidCollisionMode mode, boolean ignorePassableBlocks) {
+        Validate.notNull(start, "Start location equals null");
+        Validate.isTrue(this.equals(start.getWorld()), "Start location a different world");
+        start.checkFinite();
+
+        Validate.notNull(direction, "Direction equals null");
+        direction.checkFinite();
+
+        Validate.isTrue(direction.lengthSquared() > 0, "Direction's magnitude is 0");
+        Validate.notNull(mode, "mode equals null");
+
+        if (maxDistance < 0.0D) return null;
+
+        Vector dir = direction.clone().normalize().multiply(maxDistance);
+        Vec3d startPos = new Vec3d(start.getX(), start.getY(), start.getZ());
+        Vec3d endPos = new Vec3d(start.getX() + dir.getX(), start.getY() + dir.getY(), start.getZ() + dir.getZ());
+        HitResult nmsHitResult = this.getHandle().raycast(new RaycastContext(startPos, endPos, ignorePassableBlocks ? 
+                RaycastContext.ShapeType.COLLIDER : RaycastContext.ShapeType.OUTLINE, CardboardFluidRaytraceMode.toMc(mode), null));
+
+        return CardboardRayTraceResult.fromNMS(this, nmsHitResult);
     }
 
     @Override
@@ -1157,15 +1182,23 @@ public class WorldImpl implements World {
     }
 
     @Override
-    public boolean refreshChunk(int arg0, int arg1) {
-        // TODO Auto-generated method stub
-        return false;
+    public boolean refreshChunk(int x, int z) {
+        if (!this.isChunkLoaded(x, z)) return false;
+
+        int px = x << 4;
+        int pz = z << 4;
+
+        int height = this.getMaxHeight() / 16;
+        for (int idx = 0; idx < 64; idx++)
+            this.nms.updateListeners(new BlockPos(px + (idx / height), ((idx % height) * 16), pz), Blocks.AIR.getDefaultState(), Blocks.STONE.getDefaultState(), 3);
+        this.nms.updateListeners(new BlockPos(px + 15, (height * 16) - 1, pz + 15), Blocks.AIR.getDefaultState(), Blocks.STONE.getDefaultState(), 3);
+
+        return true;
     }
 
     @Override
     public boolean regenerateChunk(int arg0, int arg1) {
-        // TODO Auto-generated method stub
-        return false;
+        throw new UnsupportedOperationException("Not supported in Spigot 1.17");
     }
 
     @Override
@@ -1307,12 +1340,12 @@ public class WorldImpl implements World {
 
     @Override
     public void setThunderDuration(int arg0) {
-        // TODO Auto-generated method stub
+        worldProperties().setThunderTime(arg0);
     }
 
     @Override
     public void setThundering(boolean arg0) {
-        // TODO Auto-generated method stub
+        worldProperties().setThundering(arg0);
     }
 
     @Override
@@ -1347,7 +1380,11 @@ public class WorldImpl implements World {
 
     @Override
     public void setWeatherDuration(int arg0) {
-        // TODO Auto-generated method stub
+        worldProperties().setRainTime(arg0);
+    }
+
+    private ServerWorldProperties worldProperties() {
+        return ((IServerWorld)nms).cardboard_worldProperties();
     }
 
     @Override
@@ -1687,8 +1724,8 @@ public class WorldImpl implements World {
     public <T extends Entity> T addEntity(net.minecraft.entity.Entity entity, SpawnReason reason, Consumer<T> function) throws IllegalArgumentException {
         Preconditions.checkArgument(entity != null, "Cannot spawn null entity");
 
-        if (entity instanceof MobEntity)
-            ((MobEntity) entity).initialize(nms, getHandle().getLocalDifficulty(entity.getBlockPos()), net.minecraft.entity.SpawnReason.COMMAND, (EntityData) null, null);
+        //if (entity instanceof MobEntity)
+        //    ((MobEntity) entity).initialize(nms, getHandle().getLocalDifficulty(entity.getBlockPos()), net.minecraft.entity.SpawnReason.COMMAND, (EntityData) null, null);
 
         if (function != null)
             function.accept((T) ((IMixinEntity)entity).getBukkitEntity());
@@ -1841,10 +1878,13 @@ public class WorldImpl implements World {
                 //force
         );
     }
+
     @Override
-    public LightningStrike strikeLightning(Location arg0) {
-        // TODO Auto-generated method stub
-        return null;
+    public LightningStrike strikeLightning(Location loc) {
+        LightningEntity lightning = net.minecraft.entity.EntityType.LIGHTNING_BOLT.create(nms);
+        lightning.refreshPositionAfterTeleport(loc.getX(), loc.getY(), loc.getZ());
+        // nms.strikeLightning(lightning);
+        return (LightningStrike) ((IMixinEntity) lightning).getBukkitEntity();
     }
 
     @Override
@@ -1869,8 +1909,13 @@ public class WorldImpl implements World {
     }
 
     private boolean unloadChunk0(int x, int z, boolean save) {
-        // TODO
-        return false;
+        net.minecraft.world.chunk.WorldChunk chunk = nms.getChunk(x, z);
+
+        //chunk.mustNotSave = !save;
+        unloadChunkRequest(x, z);
+
+        nms.getChunkManager().executeQueuedTasks();
+        return !isChunkLoaded(x, z);
     }
 
 
@@ -2078,7 +2123,7 @@ public class WorldImpl implements World {
     @Override
     public @NotNull NamespacedKey getKey() {
         // TODO Auto-generated method stub
-        return null;
+        return NamespacedKey.minecraft(this.getName());
     }
 
     @Override
